@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Your Projects</h1>
+<form action="{{ url_for('create_project') }}" method="post" class="card">
+  <label>Project name<br><input name="name" placeholder="My Agent"></label>
+  <label>System prompt<br><textarea name="system_prompt" rows="3" placeholder="You are a helpful assistant."></textarea></label>
+  <button type="submit">Create Project</button>
+</form>
+
+<div class="grid">
+  {% for p in projects %}
+  <a class="project" href="{{ url_for('project_detail', project_id=p.id) }}">
+    <h3>{{ p.name }}</h3>
+    <p class="muted">{{ (p.system_prompt[:120] ~ ('...' if p.system_prompt|length > 120 else '')) if p.system_prompt else '—' }}</p>
+  </a>
+  {% else %}
+  <p>No projects yet.</p>
+  {% endfor %}
+</div>
+{% endblock %}
