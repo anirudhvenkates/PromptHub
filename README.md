@@ -37,6 +37,7 @@ flask --app app.py init-db
 # 5) Start dev server
 python3 app.py
 # open http://127.0.0.1:5000
+```
 
 ## Features
 - Register and log in with email and password.
