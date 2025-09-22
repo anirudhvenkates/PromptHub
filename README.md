@@ -56,4 +56,4 @@ python3 app.py
 ## Demo Video
 
 You can watch a 13-minute walkthrough of the project, including the architecture, setup, a simple chat use case, and the database schema, here:  
-[▶ Watch the Demo Video](https://adcsuf-my.sharepoint.com/:v:/g/personal/anirudh_venkatesh_csu_fullerton_edu/Ed0LozhGd0ZFkKlMJFveKzoBAeMQ_LkGY_aBavgGXMV_HQ?nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJPbmVEcml2ZUZvckJ1c2luZXNzIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXciLCJyZWZlcnJhbFZpZXciOiJNeUZpbGVzTGlua0NvcHkifX0&e=YHR22r)
+[▶ Watch the Demo Video](https://drive.google.com/file/d/1E0O-kpsNBo3JiD2KX16712mpGtzK55Ax/view?usp=sharing)
