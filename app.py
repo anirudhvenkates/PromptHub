@@ -118,44 +118,55 @@ def update_project(project_id):
     db.session.commit()
     return redirect(url_for("project_detail", project_id=project_id))
 
-# --- Chat API (AJAX) ---
 @app.route("/api/projects/<int:project_id>/chat", methods=["POST"])
 @login_required
 def api_chat(project_id):
     p = Project.query.filter_by(id=project_id, user_id=current_user().id).first_or_404()
     data = request.get_json() or {}
-    user_message = data.get("message","").strip()
+    user_message = data.get("message", "").strip()
     if not user_message:
-        return jsonify({"error":"Message is required"}), 400
+        return jsonify({"error": "Message is required"}), 400
 
-    # Call OpenAI Responses API (minimal)
-    api_key = os.getenv("OPENAI_API_KEY")
+    # --- OpenRouter only ---
+    api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
-        return jsonify({"error":"OPENAI_API_KEY not configured on server"}), 500
+        return jsonify({"error": "OPENROUTER_API_KEY not configured on server"}), 500
 
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type":"application/json"}
+    model = os.getenv("OPENROUTER_MODEL", "openrouter/auto")
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        # Optional but recommended:
+        # "HTTP-Referer": os.getenv("APP_URL", "http://localhost:5000"),
+        # "X-Title": "PromptHub",
+    }
     payload = {
-        "model": "gpt-4.1-mini",
-        "input": [
-            {"role":"system","content": p.system_prompt or "You are a helpful assistant."},
-            {"role":"user","content": user_message}
+        "model": model,
+        "messages": [
+            {"role": "system", "content": p.system_prompt or "You are a helpful assistant."},
+            {"role": "user", "content": user_message},
         ],
     }
+
     try:
-        resp = requests.post("https://api.openai.com/v1/responses", headers=headers, json=payload, timeout=60)
+        resp = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=60,
+        )
         resp.raise_for_status()
-        data = resp.json()
-        # Extract text from Responses API
-        # The Responses API returns output in 'output_text' or in 'output' array depending on model.
-        output_text = data.get("output_text")
-        if not output_text and "output" in data and isinstance(data["output"], list):
-            # fallback: concatenate text segments
-            parts = []
-            for item in data["output"]:
-                if isinstance(item, dict) and item.get("content"):
-                    parts.append(item["content"])
-            output_text = "\n".join(parts) if parts else ""
-        return jsonify({"reply": output_text or "[No response text received]"})
+        j = resp.json()
+
+        # Standard OpenAI-compatible extraction
+        output_text = ""
+        choices = (j or {}).get("choices") or []
+        if choices and choices[0].get("message", {}).get("content"):
+            output_text = choices[0]["message"]["content"]
+
+        return jsonify({"reply": output_text or "[No response text received]"}), 200
+
     except requests.RequestException as e:
         return jsonify({"error": f"LLM request failed: {str(e)}"}), 502
 
