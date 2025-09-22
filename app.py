@@ -1,10 +1,10 @@
-\
 import os
 from datetime import timedelta
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from passlib.hash import bcrypt
 from dotenv import load_dotenv
+from werkzeug.utils import secure_filename
 import requests
 
 load_dotenv()
@@ -44,6 +44,20 @@ def login_required(fn):
             return redirect(url_for("login"))
         return fn(*args, **kwargs)
     return wrapper
+
+# --- Simple uploads (per project; filesystem only) ---
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
+app.config['UPLOAD_FOLDER'] = os.path.join(app.instance_path, 'uploads')
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+ALLOWED_EXTENSIONS = {'txt','md','pdf','png','jpg','jpeg','gif','csv','json'}
+def allowed_file(name: str) -> bool:
+    return '.' in name and name.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def project_upload_dir(project_id: int) -> str:
+    d = os.path.join(app.config['UPLOAD_FOLDER'], str(project_id))
+    os.makedirs(d, exist_ok=True)
+    return d
 
 # --- Routes: Auth (session cookies for simplicity) ---
 @app.route("/register", methods=["GET","POST"])
@@ -107,7 +121,10 @@ def create_project():
 @login_required
 def project_detail(project_id):
     p = Project.query.filter_by(id=project_id, user_id=current_user().id).first_or_404()
-    return render_template("project.html", project=p)
+    # gather per-project files (names only)
+    d = project_upload_dir(project_id)
+    file_names = [f for f in sorted(os.listdir(d)) if os.path.isfile(os.path.join(d, f))]
+    return render_template("project.html", project=p, files=file_names)
 
 @app.route("/projects/<int:project_id>/update", methods=["POST"])
 @login_required
@@ -118,44 +135,106 @@ def update_project(project_id):
     db.session.commit()
     return redirect(url_for("project_detail", project_id=project_id))
 
-# --- Chat API (AJAX) ---
+# --- Simple file upload/list/download ---
+@app.post("/projects/<int:project_id>/files")
+@login_required
+def upload_file(project_id):
+    # ownership check
+    Project.query.filter_by(id=project_id, user_id=current_user().id).first_or_404()
+
+    if 'file' not in request.files:
+        flash("No file part","error")
+        return redirect(url_for("project_detail", project_id=project_id))
+
+    f = request.files['file']
+    if f.filename == '':
+        flash("No selected file","error")
+        return redirect(url_for("project_detail", project_id=project_id))
+
+    if not allowed_file(f.filename):
+        flash("File type not allowed","error")
+        return redirect(url_for("project_detail", project_id=project_id))
+
+    safe = secure_filename(f.filename)
+    dest_dir = project_upload_dir(project_id)
+    dest_path = os.path.join(dest_dir, safe)
+
+    # If same name exists, append a counter suffix (e.g., "file (1).pdf")
+    base, ext = os.path.splitext(safe)
+    i = 1
+    while os.path.exists(dest_path):
+        safe = f"{base} ({i}){ext}"
+        dest_path = os.path.join(dest_dir, safe)
+        i += 1
+
+    f.save(dest_path)
+    flash("File uploaded","success")
+    return redirect(url_for("project_detail", project_id=project_id))
+
+@app.get("/projects/<int:project_id>/files")
+@login_required
+def list_files(project_id):
+    # ownership check
+    Project.query.filter_by(id=project_id, user_id=current_user().id).first_or_404()
+    d = project_upload_dir(project_id)
+    files = []
+    for fname in sorted(os.listdir(d)):
+        pth = os.path.join(d, fname)
+        if os.path.isfile(pth):
+            files.append({"name": fname, "size": os.path.getsize(pth)})
+    return jsonify(files), 200
+
+@app.get("/projects/<int:project_id>/files/<path:filename>")
+@login_required
+def download_file(project_id, filename):
+    # ownership check
+    Project.query.filter_by(id=project_id, user_id=current_user().id).first_or_404()
+    return send_from_directory(project_upload_dir(project_id), filename, as_attachment=True)
+
+# --- Chat API (OpenRouter only) ---
 @app.route("/api/projects/<int:project_id>/chat", methods=["POST"])
 @login_required
 def api_chat(project_id):
     p = Project.query.filter_by(id=project_id, user_id=current_user().id).first_or_404()
     data = request.get_json() or {}
-    user_message = data.get("message","").strip()
+    user_message = data.get("message", "").strip()
     if not user_message:
-        return jsonify({"error":"Message is required"}), 400
+        return jsonify({"error": "Message is required"}), 400
 
-    # Call OpenAI Responses API (minimal)
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
-        return jsonify({"error":"OPENAI_API_KEY not configured on server"}), 500
+        return jsonify({"error": "OPENROUTER_API_KEY not configured on server"}), 500
 
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type":"application/json"}
+    model = os.getenv("OPENROUTER_MODEL", "openrouter/auto")
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        # "HTTP-Referer": os.getenv("APP_URL", "http://localhost:5000"),
+        # "X-Title": "PromptHub",
+    }
     payload = {
-        "model": "gpt-4.1-mini",
-        "input": [
-            {"role":"system","content": p.system_prompt or "You are a helpful assistant."},
-            {"role":"user","content": user_message}
+        "model": model,
+        "messages": [
+            {"role": "system", "content": p.system_prompt or "You are a helpful assistant."},
+            {"role": "user", "content": user_message},
         ],
     }
+
     try:
-        resp = requests.post("https://api.openai.com/v1/responses", headers=headers, json=payload, timeout=60)
+        resp = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=60,
+        )
         resp.raise_for_status()
-        data = resp.json()
-        # Extract text from Responses API
-        # The Responses API returns output in 'output_text' or in 'output' array depending on model.
-        output_text = data.get("output_text")
-        if not output_text and "output" in data and isinstance(data["output"], list):
-            # fallback: concatenate text segments
-            parts = []
-            for item in data["output"]:
-                if isinstance(item, dict) and item.get("content"):
-                    parts.append(item["content"])
-            output_text = "\n".join(parts) if parts else ""
-        return jsonify({"reply": output_text or "[No response text received]"})
+        j = resp.json()
+        output_text = ""
+        choices = (j or {}).get("choices") or []
+        if choices and choices[0].get("message", {}).get("content"):
+            output_text = choices[0]["message"]["content"]
+        return jsonify({"reply": output_text or "[No response text received]"}), 200
     except requests.RequestException as e:
         return jsonify({"error": f"LLM request failed: {str(e)}"}), 502
 
