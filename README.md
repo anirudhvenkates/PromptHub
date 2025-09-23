@@ -53,6 +53,11 @@ python3 app.py
 - Session-based authentication is used to keep it simple.
 - Code is intended for demonstration, not production.
 
+## Live Demo
+
+You can try the deployed version of PromptHub here:  
+👉 (https://prompthub-pt7f.onrender.com)
+
 ## Demo Video
 
 You can watch a 13-minute walkthrough of the project, including the architecture, setup, a simple chat use case, and the database schema, here:  
